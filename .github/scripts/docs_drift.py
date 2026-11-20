@@ -307,7 +307,7 @@ def main() -> int:
         print("PipesHub returned no answer", file=sys.stderr)
         return 2
     drifts = parse_drifts(answer)
-    chat_link = f"{PSH_APP}/chat/{conversation}" if conversation else PSH_APP
+    chat_link = f"{PSH_APP}/chat/?conversationId={conversation}" if conversation else PSH_APP
     print(summary_of(answer))
     print(f"{len(drifts)} drift(s) proposed")
 
