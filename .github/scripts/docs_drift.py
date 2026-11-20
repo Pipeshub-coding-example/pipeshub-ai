@@ -11,6 +11,7 @@ Standard library only, so it runs on a bare runner.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -179,6 +180,36 @@ def locate(text: str, find: str) -> tuple[int, int] | None:
     return (m.start(), m.end()) if m else None
 
 
+def patch_lines(text: str, find: str, replace: str) -> tuple[str, int] | None:
+    """Falls back to the changed lines alone, for a page whose markup reads
+    differently from the text PipesHub quoted (an MDX component around a
+    heading, say). Every changed line must be found once in the page."""
+    old, new = find.split("\n"), replace.split("\n")
+    lines = text.split("\n")
+    stripped = [l.strip() for l in lines]
+    edits: list[tuple[int, int, list[str]]] = []  # (start, end) in page lines -> new lines
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if tag in ("replace", "delete"):
+            spans = [stripped.index(o.strip()) if stripped.count(o.strip()) == 1 else -1 for o in old[i1:i2] if o.strip()]
+            if not spans or -1 in spans or spans != list(range(spans[0], spans[0] + len(spans))):
+                return None
+            edits.append((spans[0], spans[-1] + 1, new[j1:j2]))
+        else:  # insert after the line before it
+            anchor = next((old[k].strip() for k in range(i1 - 1, -1, -1) if old[k].strip()), None)
+            if anchor is None or stripped.count(anchor) != 1:
+                return None
+            at = stripped.index(anchor) + 1
+            edits.append((at, at, new[j1:j2]))
+    if not edits:
+        return None
+    first = min(e[0] for e in edits)
+    for start, end, repl in sorted(edits, reverse=True):
+        lines[start:end] = repl
+    return "\n".join(lines), first + 1
+
+
 def open_docs_pr(drifts: list[dict], title: str, body: str, branch: str) -> tuple[str | None, list[dict]]:
     token = os.environ["DOCS_REPO_TOKEN"]
     work = tempfile.mkdtemp(prefix="docs-")
@@ -192,12 +223,19 @@ def open_docs_pr(drifts: list[dict], title: str, body: str, branch: str) -> tupl
             print(f"  skip {d['path']}: no such page")
             continue
         text = open(path, encoding="utf-8").read()
-        span = locate(text, d["find"])
-        if span is None:
+        # Exact text first, then only the changed lines (keeps the page's own
+        # blank lines and markup), then a match that ignores whitespace.
+        exact = text.find(d["find"])
+        patched = None if exact >= 0 else patch_lines(text, d["find"], d["replace"])
+        span = (exact, exact + len(d["find"])) if exact >= 0 else (None if patched else locate(text, d["find"]))
+        if span is not None:
+            d["line"] = text.count("\n", 0, span[0]) + 1
+            text = text[: span[0]] + d["replace"] + text[span[1]:]
+        elif patched is not None:
+            text, d["line"] = patched
+        else:
             print(f"  skip {d['path']}: text to replace not found")
             continue
-        d["line"] = text.count("\n", 0, span[0]) + 1
-        text = text[: span[0]] + d["replace"] + text[span[1]:]
         open(path, "w", encoding="utf-8").write(text)
         applied.append(d)
     if not applied:
