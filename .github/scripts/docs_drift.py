@@ -156,10 +156,15 @@ Commits:
 
 
 def parse_drifts(answer: str) -> list[dict]:
-    blocks = re.findall(r"```json\s*(\{.*?\})\s*```", answer, re.S)
-    for block in reversed(blocks):
+    # The edits can hold fenced code themselves, so read from the json fence to the last fence.
+    start = answer.find("```json")
+    if start < 0:
+        return []
+    body = answer[start + len("```json"):]
+    end = body.rfind("```")
+    for candidate in (body[:end] if end >= 0 else body, body):
         try:
-            drifts = json.loads(block).get("drifts", [])
+            drifts = json.loads(candidate[candidate.find("{"):candidate.rfind("}") + 1]).get("drifts", [])
             return [d for d in drifts if d.get("path") and d.get("find") and d.get("replace")]
         except ValueError:
             continue
@@ -167,7 +172,8 @@ def parse_drifts(answer: str) -> list[dict]:
 
 
 def summary_of(answer: str) -> str:
-    return re.sub(r"```json.*?```", "", answer, flags=re.S).strip()
+    start = answer.find("```json")
+    return (answer[:start] if start >= 0 else answer).strip()
 
 
 def locate(text: str, find: str) -> tuple[int, int] | None:
@@ -333,8 +339,9 @@ def main() -> int:
     if PR:
         n = len({d["path"] for d in applied})
         src = sources(final)
+        pages = f"{n} documentation page{'s' if n != 1 else ''}"
         comment_on_pr(
-            f"{MARKER}\n### 📄 Docs drift: {n} documentation page{'s' if n != 1 else ''} out of date\n\n"
+            f"{MARKER}\n### 📄 Docs drift: {len(applied)} statement{'s' if len(applied) != 1 else ''} in {pages} now out of date\n\n"
             f"PipesHub read this change against the code graph of `{REPO}` and the docs in `{DOCS_REPO}`.\n\n"
             f"{table(applied, branch)}\n\n"
             f"**Fix ready:** {docs_pr}\n\n"
