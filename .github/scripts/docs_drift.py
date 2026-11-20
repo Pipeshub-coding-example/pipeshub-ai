@@ -303,8 +303,10 @@ def main() -> int:
 
     final, conversation = ask_pipeshub(query)
     answer = final.get("answer") or ""
-    if not answer:
-        print("PipesHub returned no answer", file=sys.stderr)
+    # A clean "no drift" still carries the json block; anything else is a failed check,
+    # never a pass (a model outage must not read as "docs are fine").
+    if not answer or final.get("errorCode") or "```json" not in answer:
+        print("PipesHub could not complete the check:", (answer or "no answer")[:300], file=sys.stderr)
         return 2
     drifts = parse_drifts(answer)
     chat_link = f"{PSH_APP}/chat/?conversationId={conversation}" if conversation else PSH_APP
