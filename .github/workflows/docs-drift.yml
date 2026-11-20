@@ -1,0 +1,48 @@
+# Docs drift: on every pull request, PipesHub reads the change against the
+# indexed code graph and the indexed documentation repository, comments with
+# the pages the change makes wrong, and opens a documentation PR that fixes them.
+name: Docs drift
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Sweep: check the docs against changes merged in the last N days"
+        default: "14"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: docs-drift-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  docs-drift:
+    name: PipesHub docs drift
+    # Pull requests from other forks never reach the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, pipeshub-local]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ask PipesHub which docs this change makes wrong
+        run: python3 .github/scripts/docs_drift.py
+        env:
+          PIPESHUB_URL: http://localhost:3002
+          PIPESHUB_APP_URL: http://localhost:3001
+          PIPESHUB_TOKEN: ${{ secrets.PIPESHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          DOCS_REPO: Pipeshub-coding-example/documentation
+          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          SWEEP_DAYS: ${{ github.event.inputs.days }}
